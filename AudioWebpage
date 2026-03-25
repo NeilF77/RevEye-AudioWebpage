@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RevEye — Vehicle Audio Dataset</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0F1923; color: #CBD5E1; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 24px; }
+        h1 { color: #fff; font-size: 24px; margin-bottom: 4px; }
+        .sub { color: #7B8BA3; font-size: 13px; margin-bottom: 24px; }
+
+        .stats { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .stat { background: #172030; border-radius: 10px; padding: 14px; flex: 1; min-width: 100px; text-align: center; }
+        .stat b { display: block; font-size: 22px; color: #E8910D; }
+        .stat span { font-size: 11px; color: #7B8BA3; }
+
+        .controls { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+        .controls input, .controls select {
+            background: #1C2738; border: 1px solid #2a3a4e; border-radius: 8px;
+            padding: 8px 12px; color: #fff; font-size: 13px;
+        }
+        .controls input { flex: 1; min-width: 180px; }
+        .controls input::placeholder { color: #7B8BA3; }
+        .btn-outline {
+            background: transparent; border: 1px solid #3B82F6; border-radius: 8px;
+            padding: 8px 16px; color: #60A5FA; font-size: 13px; cursor: pointer; white-space: nowrap;
+        }
+        .btn-outline:hover { background: #172030; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        thead th {
+            text-align: left; padding: 10px 8px; color: #7B8BA3; font-weight: 600;
+            border-bottom: 1px solid #2a3a4e; font-size: 11px; text-transform: uppercase;
+            cursor: pointer; user-select: none;
+        }
+        thead th:hover { color: #CBD5E1; }
+        thead th.sorted { color: #E8910D; }
+        tbody td { padding: 10px 8px; border-bottom: 1px solid #1C2738; vertical-align: middle; }
+        tbody tr:hover { background: #172030; }
+
+        .conf { font-weight: 600; }
+        .conf-high { color: #34D399; }
+        .conf-med { color: #E8910D; }
+        .conf-low { color: #A63D3D; }
+
+        .play-btn {
+            background: #E8910D; border: none; border-radius: 50%; width: 28px; height: 28px;
+            cursor: pointer; color: #fff; font-size: 11px; line-height: 28px; text-align: center;
+        }
+        .play-btn.playing { background: #7F2D2D; }
+        .play-btn:hover { opacity: 0.85; }
+
+        .dl-link { color: #60A5FA; text-decoration: none; font-size: 12px; margin-left: 8px; }
+        .dl-link:hover { text-decoration: underline; }
+
+        .loading { text-align: center; padding: 60px; color: #7B8BA3; }
+        .empty { text-align: center; padding: 40px; color: #7B8BA3; }
+        .count { color: #7B8BA3; font-size: 12px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>RevEye — Vehicle Audio Dataset</h1>
+    <p class="sub">Crowdsourced vehicle engine sounds collected via the RevEye iOS app. Final year project, TU Dublin.</p>
+
+    <div class="stats" id="stats"><div class="loading">Loading…</div></div>
+
+    <div class="controls">
+        <input type="text" id="search" placeholder="Filter by vehicle name…" oninput="render()" />
+        <select id="engineFilter" onchange="render()">
+            <option value="">Engine: All</option>
+            <option value="yes">Audible</option>
+            <option value="no">Not Audible</option>
+            <option value="unsure">Unsure</option>
+        </select>
+        <select id="noiseFilter" onchange="render()">
+            <option value="">Noise: All</option>
+            <option value="quiet">Quiet</option>
+            <option value="moderate">Moderate</option>
+            <option value="noisy">Noisy</option>
+        </select>
+        <select id="stateFilter" onchange="render()">
+            <option value="">State: All</option>
+            <option value="idling">Idling</option>
+            <option value="accelerating">Accelerating</option>
+            <option value="cruising">Cruising</option>
+            <option value="revving">Revving</option>
+            <option value="unknown">Unknown</option>
+        </select>
+        <button class="btn-outline" onclick="downloadCSV()">⬇ Download CSV</button>
+    </div>
+
+    <div id="countLabel" class="count"></div>
+
+    <table>
+        <thead>
+            <tr>
+                <th onclick="doSort('vehicleLabel')" id="th-vehicleLabel">Vehicle</th>
+                <th onclick="doSort('confidence')" id="th-confidence">Conf.</th>
+                <th onclick="doSort('audioDuration')" id="th-audioDuration">Duration</th>
+                <th onclick="doSort('engineAudible')" id="th-engineAudible">Engine</th>
+                <th onclick="doSort('vehicleState')" id="th-vehicleState">State</th>
+                <th onclick="doSort('backgroundNoise')" id="th-backgroundNoise">Noise</th>
+                <th onclick="doSort('recordingContext')" id="th-recordingContext">Context</th>
+                <th onclick="doSort('timestamp')" id="th-timestamp">Date</th>
+                <th>Audio</th>
+            </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+    </table>
+
+    <div id="emptyMsg"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script>
+firebase.initializeApp({
+    apiKey: "AIzaSyBfcrn8WdbOcn4LMdd3H1Gngxt4H4_HpDo",
+    projectId: "reveye-17c5a",
+    storageBucket: "reveye-17c5a.firebasestorage.app",
+    messagingSenderId: "284328471634",
+    appId: "1:284328471634:ios:5a5647f35ac295e90d838b"
+});
+
+const db = firebase.firestore();
+let all = [];
+let sortField = 'timestamp';
+let sortAsc = false;
+let currentAudio = null;
+let playingId = null;
+
+async function load() {
+    try {
+        const snap = await db.collection('audioSamples').orderBy('timestamp', 'desc').limit(1000).get();
+        all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        renderStats();
+        render();
+    } catch (e) {
+        document.getElementById('stats').innerHTML = `<div class="empty">Error: ${e.message}<br><br>Make sure Firestore rules allow public read on audioSamples collection.</div>`;
+    }
+}
+
+function renderStats() {
+    const dur = all.reduce((s, a) => s + (a.audioDuration || 0), 0);
+    const vehs = new Set(all.map(s => s.vehicleLabel)).size;
+    const users = new Set(all.map(s => s.userId)).size;
+    document.getElementById('stats').innerHTML = `
+        <div class="stat"><b>${all.length}</b><span>Samples</span></div>
+        <div class="stat"><b>${fmtDur(dur)}</b><span>Total Audio</span></div>
+        <div class="stat"><b>${vehs}</b><span>Unique Vehicles</span></div>
+        <div class="stat"><b>${users}</b><span>Contributors</span></div>
+    `;
+}
+
+function render() {
+    const q = document.getElementById('search').value.toLowerCase();
+    const ef = document.getElementById('engineFilter').value;
+    const nf = document.getElementById('noiseFilter').value;
+    const sf = document.getElementById('stateFilter').value;
+
+    let filtered = all.filter(s => {
+        if (q && !(s.vehicleLabel || '').toLowerCase().includes(q)) return false;
+        if (ef && s.engineAudible !== ef) return false;
+        if (nf && s.backgroundNoise !== nf) return false;
+        if (sf && s.vehicleState !== sf) return false;
+        return true;
+    });
+
+    filtered.sort((a, b) => {
+        let va = a[sortField] ?? '', vb = b[sortField] ?? '';
+        if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
+        return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    });
+
+    document.getElementById('countLabel').textContent = `Showing ${filtered.length} of ${all.length} samples`;
+    document.querySelectorAll('thead th').forEach(th => th.classList.remove('sorted'));
+    const sortTh = document.getElementById('th-' + sortField);
+    if (sortTh) sortTh.classList.add('sorted');
+
+    if (filtered.length === 0) {
+        document.getElementById('tbody').innerHTML = '';
+        document.getElementById('emptyMsg').innerHTML = '<div class="empty">No matching samples</div>';
+        return;
+    }
+    document.getElementById('emptyMsg').innerHTML = '';
+
+    document.getElementById('tbody').innerHTML = filtered.map(s => {
+        const cp = Math.round((s.confidence || 0) * 100);
+        const cc = cp >= 70 ? 'conf-high' : cp >= 40 ? 'conf-med' : 'conf-low';
+        const has = s.audioBase64 && s.audioBase64.length > 100;
+        return `<tr>
+            <td><strong style="color:#fff">${s.vehicleLabel || '—'}</strong></td>
+            <td><span class="conf ${cc}">${cp}%</span></td>
+            <td>${fmtDur(s.audioDuration || 0)}</td>
+            <td>${pretty(s.engineAudible)}</td>
+            <td>${pretty(s.vehicleState)}</td>
+            <td>${pretty(s.backgroundNoise)}</td>
+            <td>${pretty(s.recordingContext)}</td>
+            <td>${fmtDate(s.timestamp)}</td>
+            <td>${has ? `<button class="play-btn ${playingId===s.id?'playing':''}" onclick="play('${s.id}')">${playingId===s.id?'⏹':'▶'}</button><a class="dl-link" href="#" onclick="dl('${s.id}');return false">⬇</a>` : '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+function doSort(field) {
+    if (sortField === field) sortAsc = !sortAsc;
+    else { sortField = field; sortAsc = true; }
+    render();
+}
+
+function play(id) {
+    if (playingId === id) { currentAudio?.pause(); currentAudio = null; playingId = null; render(); return; }
+    const s = all.find(x => x.id === id);
+    if (!s?.audioBase64) return;
+    currentAudio?.pause();
+    const bin = atob(s.audioBase64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    currentAudio = new Audio(URL.createObjectURL(new Blob([arr], { type: 'audio/mp4' })));
+    playingId = id;
+    render();
+    currentAudio.play();
+    currentAudio.onended = () => { playingId = null; currentAudio = null; render(); };
+}
+
+function dl(id) {
+    const s = all.find(x => x.id === id);
+    if (!s?.audioBase64) return;
+    const bin = atob(s.audioBase64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([arr], { type: 'audio/mp4' }));
+    a.download = (s.vehicleLabel || 'audio').replace(/[^a-zA-Z0-9]/g, '_') + '.m4a';
+    a.click();
+}
+
+function downloadCSV() {
+    const h = ['Vehicle','Confidence_%','Duration_s','Engine_Audible','Vehicle_State','Background_Noise','Recording_Context','Timestamp','Has_Audio'];
+    const rows = all.map(s => [
+        '"'+(s.vehicleLabel||'').replace(/"/g,'""')+'"',
+        Math.round((s.confidence||0)*100),
+        (s.audioDuration||0).toFixed(1),
+        s.engineAudible||'',
+        s.vehicleState||'',
+        s.backgroundNoise||'',
+        s.recordingContext||'',
+        s.timestamp||'',
+        s.audioBase64&&s.audioBase64.length>100?'yes':'no'
+    ]);
+    const csv = [h.join(','), ...rows.map(r=>r.join(','))].join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download = 'reveye_audio_dataset.csv';
+    a.click();
+}
+
+function fmtDur(s) { s=Math.round(s); return s>=60?`${Math.floor(s/60)}m ${(s%60).toString().padStart(2,'0')}s`:`${s}s`; }
+function fmtDate(iso) { if(!iso) return ''; try{return new Date(iso).toLocaleDateString('en-IE',{day:'numeric',month:'short',year:'numeric'});}catch{return iso;} }
+function pretty(r) { return (r||'—').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()); }
+
+load();
+</script>
+</body>
+</html>
